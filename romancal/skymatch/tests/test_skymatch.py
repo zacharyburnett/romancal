@@ -71,8 +71,10 @@ def mk_image_model(
     sky_offset=[0, 0] * u.arcsec,
     rotation=0 * u.deg,
     image_shape=(100, 100),
-    rng=np.random.default_rng(619),
+    rng=None,
 ):
+    if rng is None:
+        rng = np.random.default_rng(619)
     l2 = mk_level2_image(shape=image_shape)
     l2_im = ImageModel(l2)
     l2_im.data = u.Quantity(

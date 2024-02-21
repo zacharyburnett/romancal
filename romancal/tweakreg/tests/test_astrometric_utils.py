@@ -325,15 +325,9 @@ def _create_tel2sky_model(input_dm):
 def create_basic_wcs(
     img_shape: tuple = (100, 100),
     ref_pix: tuple = (0, 0),
-    ref_val: Tuple[u.Quantity, u.Quantity] = (
-        u.Quantity("10 deg"),
-        u.Quantity("0 deg"),
-    ),
-    pix_scale: Tuple[u.Quantity, u.Quantity] = (
-        u.Quantity("0.1 arcsec"),
-        u.Quantity("0.1 arcsec"),
-    ),
-    theta: u.Quantity = u.Quantity("0 deg"),
+    ref_val: Tuple[u.Quantity, u.Quantity] = None,
+    pix_scale: Tuple[u.Quantity, u.Quantity] = None,
+    theta: u.Quantity = None,
 ):
     """
     Creates a basic WCS (no distortion) to map pixel coordinates
@@ -369,6 +363,12 @@ def create_basic_wcs(
     does not contain the required steps to validate against the
     TweakReg pipeline.
     """
+    if ref_val is None:
+        ref_val = (u.Quantity("10 deg"), u.Quantity("0 deg"))
+    if pix_scale is None:
+        pix_scale = (u.Quantity("0.1 arcsec"), u.Quantity("0.1 arcsec"))
+    if theta is None:
+        theta = u.Quantity("0 deg")
 
     # linear transformations
     shift_pixel_coords = models.Shift(-ref_pix[0]) & models.Shift(-ref_pix[1])
