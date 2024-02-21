@@ -242,10 +242,10 @@ def test_name_index():
     assert c2["sc4"].value
 
     with pytest.raises(KeyError):
-        c2["nonexistent"].value
+        c2["nonexistent"].value  # noqa: B018
 
     with pytest.raises(AttributeError):
-        c2["sc1"].nonexistent
+        c2["sc1"].nonexistent  # noqa: B018
 
 
 def test_copy():
