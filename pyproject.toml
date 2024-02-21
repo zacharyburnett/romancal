@@ -193,16 +193,22 @@ force-exclude = '''
 
 [tool.ruff]
 line-length = 88
-lint.exclude = [
+
+[tool.ruff.lint]
+exclude = [
     'jdocs',
     '.tox',
     '.eggs',
     'build',
 ]
-lint.ignore = [
+ignore = [
     'E741', # ambiguous variable name
 ]
-lint.extend-select = ['NPY']
+extend-select = [
+    'NPY',
+    'F',
+    'B',
+]
 
 [tool.ruff.lint.extend-per-file-ignores]
 "romancal/associations/__init__.py" = ["E402"]
