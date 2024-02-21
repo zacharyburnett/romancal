@@ -119,15 +119,18 @@ def prune_duplicate_products(asns):
     if not dups:
         return asns
 
-    warnings.warn(f"Duplicate associations exist: {dups}", RuntimeWarning)
+    warnings.warn(f"Duplicate associations exist: {dups}", RuntimeWarning, stacklevel=2)
     if config.DEBUG:
         warnings.warn(
             'Duplicate associations will have "dupXXX" prepended to their names, where'
-            ' "XXX" is a 3-digit sequence.'
+            ' "XXX" is a 3-digit sequence.',
+            stacklevel=2,
         )
     else:
         warnings.warn(
-            "Duplicates will be removed, leaving only one of each.", RuntimeWarning
+            "Duplicates will be removed, leaving only one of each.",
+            RuntimeWarning,
+            stacklevel=2,
         )
 
     pruned = copy.copy(asns)

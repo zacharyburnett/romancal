@@ -145,6 +145,7 @@ def build_driz_weight(model, weight_type=None, good_bits=None):
             warnings.warn(
                 "var_rnoise array not available. Setting drizzle weight map to 1",
                 RuntimeWarning,
+                stacklevel=2,
             )
             inv_variance = 1.0
         result = inv_variance * dqmask
