@@ -150,6 +150,6 @@ class Asn_Lv2GBTDSFull(AsnMixin_Lv2GBTDSfull, DMS_ELPP_Base):
         exp_type = item["exp_type"]
 
         if exp_type == "wfi_image":
-            exp_type == "science"
+            exp_type = "science"
 
         return exp_type
