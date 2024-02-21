@@ -41,7 +41,7 @@ class TestDupNames:
         c = Constraint(constraints)
         dups = c.dup_names
         assert set(dups.keys()) == set(expected.keys())
-        for name, constraints in dups.items():
+        for name in dups:
             assert set(dups[name]) == set(expected[name])
 
 

@@ -126,7 +126,7 @@ class OutlierDetection:
         else:
             # Median image will serve as blot image
             blot_models = ModelContainer(return_open=False)
-            for i in range(len(self.input_models)):
+            for _ in range(len(self.input_models)):
                 blot_models.append(median_model)
 
         # Perform outlier detection using statistical comparisons between
