@@ -147,7 +147,7 @@ class ModelContainer(Sequence):
 
         try:
             init = Path(init)
-        except TypeError:
+        except TypeError as err:
             if init is None:
                 # don't populate container
                 pass
@@ -169,7 +169,7 @@ class ModelContainer(Sequence):
                     raise TypeError(
                         "Input must be an ASN file or a list of either strings "
                         "(full path to ASDF files) or Roman datamodels."
-                    )
+                    ) from err
         else:
             if is_association(init):
                 self.from_asn(init)
