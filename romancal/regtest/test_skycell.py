@@ -29,13 +29,8 @@ def test_skycells():
     skycells = skymap.SkyCells.from_names(TEST_SKYCELLS)
 
     assert sorted(skycells.names) == sorted(TEST_SKYCELLS)
-
-    assert skycells.radec_corners.shape == (len(TEST_SKYCELLS), 4, 2)
-    assert skycells.vectorpoint_corners.shape == (len(TEST_SKYCELLS), 4, 3)
-
-    assert skycells.radec_centers.shape == (len(TEST_SKYCELLS), 2)
-    assert skycells.vectorpoint_centers.shape == (len(TEST_SKYCELLS), 3)
-
+    assert skycells.corners.shape == (len(TEST_SKYCELLS), 4, 2)
+    assert skycells.centers.shape == (len(TEST_SKYCELLS), 2)
     assert len(skycells.polygons) == len(TEST_SKYCELLS)
 
 
@@ -70,7 +65,7 @@ def test_skycell_wcs_pixel_to_world(name):
                 with_bounding_box=False,
             )
         ).T,
-        skycell.radec_corners[0],
+        skycell.corners[0],
         rtol=1e-7,
     )
 
@@ -84,7 +79,7 @@ def test_skycell_wcs_world_to_pixel(name):
     # inverse transform to pixel corners
     # TODO: the corners in the reference file currently use FITS convention (pixel + 0.5) instead of (pixel - 0.5)
     assert_allclose(
-        np.array(wcsobj.invert(*skycell.radec_corners.T, with_bounding_box=False)).T,
+        np.array(wcsobj.invert(*skycell.corners.T, with_bounding_box=False)).T,
         [
             [
                 (-0.5, -0.5),

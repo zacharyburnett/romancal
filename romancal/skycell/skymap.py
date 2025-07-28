@@ -7,9 +7,7 @@ from pathlib import Path
 import crds
 import numpy as np
 import roman_datamodels
-import spherical_geometry.great_circle_arc as sga
-import spherical_geometry.polygon as sgp
-import spherical_geometry.vector as sgv
+import sphersgeo
 from asdf import AsdfFile
 from astropy import coordinates
 from astropy import units as u
@@ -159,7 +157,7 @@ class SkyCells:
         return self.data["name"].tolist()
 
     @property
-    def radec_centers(self) -> NDArray[float]:
+    def centers(self) -> NDArray[float]:
         """center points in right ascension and declination (Nx2 array of floats)"""
         return np.array((self.data["ra_center"], self.data["dec_center"])).T
 
@@ -173,7 +171,12 @@ class SkyCells:
         return np.array((self.data["x_tangent"], self.data["y_tangent"]))
 
     @property
-    def radec_corners(
+    def xy_tangent(self) -> tuple[float, float]:
+        """point at which the projection plane touches the sphere, in pixel coordinates"""
+        return self.data["x_tangent"].item(), self.data["y_tangent"].item()
+
+    @property
+    def corners(
         self,
     ) -> NDArray[float]:
         """corners in right ascension and declination in the order given by the loaded sky map (Nx4x2 array of floats)"""
@@ -190,44 +193,10 @@ class SkyCells:
         )
 
     @cached_property
-    def vectorpoint_corners(self) -> NDArray[float]:
-        """corners in 3D Cartesian space on the unit sphere (Nx4x3 array of floats)"""
-        radec_corners = np.reshape(self.radec_corners, (len(self) * 4, 2))
-        return np.reshape(
-            sgv.normalize_vector(
-                np.stack(
-                    sgv.lonlat_to_vector(radec_corners[:, 0], radec_corners[:, 1]),
-                    axis=1,
-                )
-            ),
-            (len(self), 4, 3),
-        )
-
-    @cached_property
-    def vectorpoint_centers(self) -> NDArray[float]:
-        """centers in 3D Cartesian space on the unit sphere (Nx3 array of floats)"""
-        return sgv.normalize_vector(
-            np.stack(
-                sgv.lonlat_to_vector(
-                    self.radec_centers[:, 0], self.radec_centers[:, 1]
-                ),
-                axis=1,
-            )
-        )
-
-    @cached_property
-    def polygons(self) -> sgp.SphericalPolygon:
+    def polygons(self) -> sphersgeo.MultiSphericalPolygon:
         """spherical polygons representing these skycells"""
-        return sgp.SphericalPolygon(
-            [
-                sgp.SingleSphericalPolygon(
-                    points=vectorpoint_corners,
-                    inside=vectorpoint_center,
-                )
-                for vectorpoint_corners, vectorpoint_center in zip(
-                    self.vectorpoint_corners, self.vectorpoint_centers, strict=True
-                )
-            ]
+        return sphersgeo.MultiSphericalPolygon(
+            [sphersgeo.SphericalPolygon(corners) for corners in self.corners]
         )
 
     @cached_property
@@ -489,20 +458,31 @@ class SkyCells:
                         )
         return skycells
 
-    @cached_property
-    def kdtree(self) -> KDTree:
-        """k-d tree of skycells, using normalized center vectorpoints in 3D space"""
-        return KDTree(
-            sgv.normalize_vector(
-                np.stack(
-                    sgv.lonlat_to_vector(
-                        self.data["ra_center"],
-                        self.data["dec_center"],
-                    ),
-                    axis=1,
-                )
-            )
-        )
+    @property
+    def wcs_info(self) -> dict[str, float | str]:
+        """WCS properties as defined in the Level 3 association schema"""
+
+        radec_tangent = self.projection_region.tangent.to_lonlat()
+        radec_center = self.center.to_lonlat()
+
+        return {
+            "name": self.name,
+            "pixel_scale": self.pixel_scale,
+            "ra_projection_center": radec_tangent[0],
+            "dec_projection_center": radec_tangent[1],
+            "x0_projection": self.xy_tangent[0],
+            "y0_projection": self.xy_tangent[1],
+            "ra_center": radec_center[0],
+            "dec_center": radec_center[1],
+            "nx": self.pixel_shape[0],
+            "ny": self.pixel_shape[1],
+            "orientat": self.orientation,
+            "orientat_projection_center": self.projection_region.orientation
+            if self.projection_region.data["dec_max"] != 90.0
+            # rotate north polar cap by 180 degrees
+            # TODO: find out why this is necessary...
+            else self.projection_region.orientation + 180,
+        }
 
     def __len__(self) -> int:
         return len(self._indices)
@@ -617,8 +597,8 @@ class ProjectionRegion:
         return self._data
 
     @property
-    def radec_tangent(self) -> tuple[float, float]:
-        """projection origin (tangent point with the celestial sphere) in right ascension and declination"""
+    def tangent(self) -> tuple[float, float]:
+        """point at which the projection plane touches the sphere"""
         return self.data[["ra_tangent", "dec_tangent"]].item()
 
     @property
@@ -650,42 +630,26 @@ class ProjectionRegion:
         """collection of all skycells in this projection region"""
         return SkyCells(self.skycell_indices)
 
-    @property
-    def radec_corners(
-        self,
-    ) -> NDArray:
-        """corners in right ascension and declination in clockwise order"""
-        return np.array(
-            (
-                self.data[["ra_min", "dec_min"]].item(),
-                self.data[["ra_max", "dec_min"]].item(),
-                self.data[["ra_max", "dec_max"]].item(),
-                self.data[["ra_min", "dec_max"]].item(),
-            )
-        )
+    def skycells_kdtree(self) -> KDTree:
+        """LOCAL k-d tree of skycells in this projection region, using normalized center points in 3D space
 
-    @cached_property
-    def vectorpoint_corners(self) -> NDArray[float]:
-        """corners in 3D Cartesian space on the unit sphere"""
-        return sgv.normalize_vector(
-            np.stack(sgv.lonlat_to_vector(*np.array(self.radec_corners).T), axis=1)
-        )
+        NOTE
+        ----
+        add `skycell_start` to the indices returned by this tree to convert to skycell indices in the parent skymap
+        """
 
-    @cached_property
-    def vectorpoint_center(self) -> tuple[float, float, float]:
-        """center in 3D Cartesian space on the unit sphere"""
-        return np.mean(self.vectorpoint_corners, axis=0)
+        return KDTree(
+            sphersgeo.MultiSphericalPoint(
+                np.stack(
+                    [self.skycells["ra_center"], self.skycells["dec_center"]], axis=1
+                )
+            ).xyzs
+        )
 
     @cached_property
     def length(self) -> float:
-        """diagonal length of the region"""
-        # assume radial against sky background
-        return max(
-            sga.length(
-                self.vectorpoint_corners[index], self.vectorpoint_corners[index + 2]
-            )
-            for index in range(len(self.vectorpoint_corners) - 3)
-        )
+        """diagonal length of the region in degrees"""
+        return self.polygon.length
 
     @property
     def is_polar(self) -> bool:
@@ -693,13 +657,13 @@ class ProjectionRegion:
         return self.data["dec_max"] == 90.0 or self.data["dec_min"] == -90.0
 
     @cached_property
-    def polygon(self) -> sgp.SingleSphericalPolygon:
-        """spherical polygon representing this region"""
+    def polygon(self) -> sphersgeo.SphericalPolygon:
+        """polygon on the unit sphere representing this region"""
         if self.is_polar:
             # the projection regions at the poles are circular caps on the sphere;
             # a polygon built from the corners in that case would be degenerate
-            return sgp.SingleSphericalPolygon.from_cone(
-                *self.radec_tangent,
+            return sphersgeo.SphericalPolygon.from_cone(
+                self.tangent,
                 radius=(
                     90.0 - self.radec_bounds[1]
                     if self.data["dec_max"] == 90.0
@@ -708,9 +672,15 @@ class ProjectionRegion:
                 steps=16,
             )
         else:
-            return sgp.SingleSphericalPolygon(
-                points=self.vectorpoint_corners,
-                inside=self.vectorpoint_center,
+            return sphersgeo.SphericalPolygon(
+                np.array(
+                    [
+                        self.data[["ra_min", "dec_min"]].item(),
+                        self.data[["ra_max", "dec_min"]].item(),
+                        self.data[["ra_max", "dec_max"]].item(),
+                        self.data[["ra_min", "dec_max"]].item(),
+                    ]
+                ),
             )
 
     @property
@@ -790,10 +760,10 @@ class SkyMap:
     .. [skymap] `Skymap Tessellation <https://roman-docs.stsci.edu/data-handbook-home/wfi-data-format/skymap-tessellation>`_
     """
 
-    _path: None | Path
+    _path: Path | None
     _data: AsdfFile
 
-    def __init__(self, path: None | Path | str = None):
+    def __init__(self, path: Path | str | None = None):
         """
         Parameters
         ----------
@@ -806,12 +776,12 @@ class SkyMap:
         self._data = None
 
     @property
-    def path(self) -> None | Path:
+    def path(self) -> Path | None:
         """location of skymap reference file on filesystem"""
         return self._path
 
     @path.setter
-    def path(self, path: None | Path):
+    def path(self, path: Path | None):
         self._path = path
         # reset data if retrieved
         self._data = None
@@ -839,18 +809,38 @@ class SkyMap:
         return SkyCells(np.arange(len(self.model.skycells)))
 
     @cached_property
-    def projection_regions_kdtree(self) -> KDTree:
-        """k-d tree of all projection regions in this skymap, using normalized center vectorpoints in 3D space"""
+    def skycells_kdtree(self) -> KDTree:
+        """k-d tree of all skycells in the skymap, using normalized center points in 3D space
+
+        NOTE
+        ----
+        there are 8 million skycells in the skymap; constructing this tree will take a long time. It is recommended that you instead use the `.skycells_kdtree` property of an individual projection region instead.
+        """
         return KDTree(
-            sgv.normalize_vector(
+            sphersgeo.MultiSphericalPoint(
                 np.stack(
-                    sgv.lonlat_to_vector(
-                        self.model.projection_regions["ra_tangent"],
-                        self.model.projection_regions["dec_tangent"],
-                    ),
+                    [
+                        self.model.skycells["ra_center"],
+                        self.model.skycells["dec_center"],
+                    ],
                     axis=1,
                 )
-            )
+            ).xyzs
+        )
+
+    @cached_property
+    def projection_regions_kdtree(self) -> KDTree:
+        """k-d tree of all projection regions in the skymap, using normalized center points in 3D space"""
+        return KDTree(
+            sphersgeo.MultiSphericalPoint(
+                np.stack(
+                    [
+                        self.model.projection_regions["ra_tangent"],
+                        self.model.projection_regions["dec_tangent"],
+                    ],
+                    axis=1,
+                )
+            ).xyzs
         )
 
     @property
@@ -935,7 +925,7 @@ def _ra_in_range(ra: float, low: float, high: float):
 
 def _wcsinfo_to_wcs(
     wcsinfo: dict,
-    bounding_box: None | tuple[tuple[float, float], tuple[float, float]] = None,
+    bounding_box: tuple[tuple[float, float], tuple[float, float]] | None = None,
 ) -> WCS:
     """Create a WCS from the skycell wcsinfo meta
 

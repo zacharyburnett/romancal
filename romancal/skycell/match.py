@@ -8,9 +8,7 @@ import logging
 from functools import cached_property
 
 import numpy as np
-import spherical_geometry.great_circle_arc as sga
-import spherical_geometry.polygon as sgp
-import spherical_geometry.vector as sgv
+import sphersgeo
 from gwcs import WCS
 from numpy.typing import NDArray
 
@@ -25,16 +23,12 @@ __all__ = ["find_skycell_matches"]
 class _ImageFootprint:
     """abstraction of an image footprint"""
 
-    _radec_corners: NDArray[float]
-
-    def __init__(self, radec_vertices: list[tuple[float, float]]):
-        """
-        Parameters
-        ----------
-        radec_vertices: list[tuple[float, float]]
-            vertices (usually the corners) of the image in right ascension and declination
-        """
-        self._radec_vertices = np.array(radec_vertices)
+    def __init__(self, polygon: sphersgeo.SphericalPolygon | np.ndarray):
+        self.polygon = (
+            polygon
+            if isinstance(polygon, sphersgeo.SphericalPolygon)
+            else sphersgeo.SphericalPolygon(polygon)
+        )
 
     @classmethod
     def from_wcs(
@@ -56,81 +50,29 @@ class _ImageFootprint:
         image footprint object
         """
 
-        if (
-            extra_vertices_per_edge <= 0
-            and hasattr(wcs, "bounding_box")
-            and wcs.bounding_box is not None
-        ):
-            vertex_points = wcs.footprint(center=False)
-        else:
-            vertex_points = np.array(
-                sgp.SingleSphericalPolygon.from_wcs(
-                    wcs, steps=extra_vertices_per_edge + 1
-                ).to_lonlat()
-            ).T
-
-        return cls(vertex_points)
+        return cls(sphersgeo.from_wcs.polygon_from_wcs(wcs, extra_vertices_per_edge))
 
     @property
-    def radec_corners(self) -> NDArray:
-        """vertices in right ascension and declination in counterclockwise order"""
-        return self._radec_vertices
+    def center(self) -> sphersgeo.SphericalPoint:
+        """center point of image footprint on the sphere"""
+        return self.polygon.centroid
 
-    @cached_property
-    def radec_center(self) -> tuple[float, float]:
-        """center point in right ascension and declination"""
-        return sgv.vector_to_lonlat(*self.vectorpoint_center)
-
-    @cached_property
-    def vectorpoint_vertices(self) -> NDArray[float]:
-        """vertices in 3D Cartesian space on the unit sphere"""
-        return sgv.normalize_vector(
-            np.stack(sgv.lonlat_to_vector(*self.radec_corners.T), axis=1)
-        )
-
-    @cached_property
-    def vectorpoint_center(self) -> tuple[float, float, float]:
-        """center in 3D Cartesian space on the unit sphere"""
-        return sgv.normalize_vector(np.mean(self.vectorpoint_vertices, axis=0))
-
-    @cached_property
+    @property
     def length(self) -> float:
-        """diagonal length of the rectangular footprint"""
-        # assume equally-spaced points around the perimeter
-        # NOTE: this will produce an incorrect value with no error if the points are not equally spaced
-        half_index_length = round(len(self.vectorpoint_vertices) / 2)
-        return max(
-            sga.length(
-                self.vectorpoint_vertices[index],
-                self.vectorpoint_vertices[index + half_index_length],
-            )
-            for index in range(len(self.vectorpoint_vertices) - half_index_length - 1)
-        )
+        """diagonal length of the rectangular footprint over the sphere in degrees"""
+        return self.polygon.length
 
-    @cached_property
+    @property
     def circumference(self) -> float:
-        """circumference of the rectangular footprint"""
-        return sum(
-            sga.length(
-                self.vectorpoint_vertices[index], self.vectorpoint_vertices[index + 1]
-            )
-            for index in range(-1, len(self.vectorpoint_vertices) - 1)
-        )
+        """circumference of the rectangular footprint in degrees"""
+        return self.polygon.boundary.length
 
-    @cached_property
-    def polygon(self) -> sgp.SingleSphericalPolygon:
-        """spherical polygon representing this image footprint"""
-        return sgp.SingleSphericalPolygon(
-            points=self.vectorpoint_vertices,
-            inside=self.vectorpoint_center,
-        )
-
-    @cached_property
+    @property
     def area(self) -> float:
         """area of this footprint on the sphere in degrees squared"""
-        return self.polygon.area()
+        return self.polygon.area
 
-    @cached_property
+    @property
     def possibly_intersecting_projregions(self) -> int:
         """number of possibly intersecting projection regions"""
         if self.area > sc.SkyCells.area:
@@ -144,13 +86,13 @@ class _ImageFootprint:
             # 4 foundational intersections
             return 4
 
-    @cached_property
+    @property
     def possibly_intersecting_skycells(self) -> int:
         """number of possibly intersecting skycells"""
-        if self.polygon.area() > sc.SkyCells.area:
+        if self.area > sc.SkyCell.area:
             return (
                 # number of times a skycell could fit in the image footprint
-                np.ceil(self.polygon.area() / sc.SkyCells.area)
+                np.ceil(self.area / sc.SkyCell.area)
                 # plus multiplier for partial intersections on the perimeter
                 * 8
             )
@@ -169,10 +111,12 @@ class _ImageFootprint:
         return (self.length + sc.SkyCells.length) / 2.0
 
     def __str__(self) -> str:
-        return f"footprint {self.radec_corners}"
+        return f"footprint {self.polygon.boundary.vertices.lonlats}"
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.radec_corners!r})"
+        return (
+            f"{self.__class__.__name__}({self.polygon.boundary.vertices.lonlats!r})"
+        )
 
 
 def find_skycell_matches(
@@ -208,9 +152,9 @@ def find_skycell_matches(
     # query the global k-d tree of projection regions for possible intersection candidates in (normalized) 3D space
     nearby_projregion_indices = np.array(
         skymap.projection_regions_kdtree.query_ball_point(
-            footprint.vectorpoint_center,
+            footprint.center.xyz,
             r=footprint.possible_intersecting_projregion_distance * 1.1,
-        )
+        )[1]
     )
     nearby_projregion_indices = nearby_projregion_indices[
         nearby_projregion_indices != len(skymap.model.projection_regions)
@@ -222,7 +166,7 @@ def find_skycell_matches(
             # query the LOCAL k-d tree of skycells for possible intersection candidates in (normalized) 3D space
             projregion_nearby_skycell_indices = np.array(
                 projregion.skycells.kdtree.query_ball_point(
-                    footprint.vectorpoint_center,
+                    footprint.center.xyz,
                     r=footprint.possible_intersecting_skycell_distance * 1.1,
                 )
             )

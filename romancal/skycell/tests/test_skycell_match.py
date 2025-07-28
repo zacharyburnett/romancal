@@ -31,7 +31,7 @@ import astropy.modeling.models as amm
 import astropy.units as u
 import numpy as np
 import pytest
-import spherical_geometry.vector as sgv
+import sphersgeo
 from gwcs import WCS, coordinate_frames
 
 import romancal.skycell.match as sm
@@ -66,37 +66,30 @@ def mk_im_corners(
     side size, ra, dec, and position angle (all in degrees).
     """
     # Generate 4 unit vectors at ra, dec = (0 , 0)
-    center = sgv.lonlat_to_vector(0.0, 0.0)
-    radecvec = sgv.lonlat_to_vector(ra, dec)
-    zaxis = (0.0, 0.0, 1.0)
-    yaxis = (0.0, 1.0, 0.0)
-    pp = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (-size / 2,))) + zaxis + (+size / 2,))
+    center = sphersgeo.SphericalPoint((0.0, 0.0))
+    radecvec = sphersgeo.SphericalPoint((ra, dec))
+    zaxis = sphersgeo.SphericalPoint((0.0, 0.0, 1.0))
+    yaxis = sphersgeo.SphericalPoint((0.0, 1.0, 0.0))
+    pp = center.vector_rotate_around(yaxis, -size / 2).vector_rotate_around(
+        zaxis, +size / 2
     )
-    pm = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (+size / 2,))) + zaxis + (+size / 2,))
+    pm = center.vector_rotate_around(yaxis, +size / 2).vector_rotate_around(
+        zaxis, +size / 2
     )
-    mp = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (-size / 2,))) + zaxis + (-size / 2,))
+    mp = center.vector_rotate_around(yaxis, -size / 2).vector_rotate_around(
+        zaxis, -size / 2
     )
-    mm = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (+size / 2,))) + zaxis + (-size / 2,))
+    mm = center.vector_rotate_around(yaxis, +size / 2).vector_rotate_around(
+        zaxis, -size / 2
     )
-    rect = [pp, mp, mm, pm]
+    rect = sphersgeo.MultiSphericalPoint([pp, mp, mm, pm])
 
     # Now move to requested ra and dec
-    trect = [
-        sgv.rotate_around(
-            *(sgv.rotate_around(*(vec + yaxis + (-dec,))) + zaxis + (ra,))
-        )
-        for vec in rect
-    ]
+    trect = [corner.vector_rotate_around(yaxis, -dec).vector_rotate_around(zaxis, ra) for corner in rect.parts]
     # Rotate to desired position angle
-    rrect = [sgv.rotate_around(*(vec + radecvec + (pa,))) for vec in trect]
-    frect = [sgv.vector_to_lonlat(*vec) for vec in rrect]
+    rrect = [corner.vector_rotate_around(radecvec, pa) for corner in trect]
     # Reorganize by ra, dec arrays
-    radecrect = np.array(frect)
-    return radecrect
+    return rrect.lonlats
 
 
 def mk_gwcs(ra, dec, pa, bounding_box=None, shape=(4096, 4096)) -> WCS:
@@ -401,7 +394,7 @@ def test_skycell_match(
 def test_match_from_wcs_with_bbox(test_point, expected_skycell_names, skymap_subset):
     wcsobj = mk_gwcs(
         *test_point,
-        45,
+        pa=45,
         bounding_box=((-0.5, 4096 - 0.5), (-0.5, 4096 - 0.5)),
     )
 
