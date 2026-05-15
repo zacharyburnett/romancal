@@ -7,9 +7,6 @@ from pathlib import Path
 import crds
 import numpy as np
 import roman_datamodels
-import spherical_geometry.great_circle_arc as sga
-import spherical_geometry.polygon as sgp
-import spherical_geometry.vector as sgv
 from asdf import AsdfFile
 from astropy import coordinates
 from astropy import units as u
@@ -17,6 +14,7 @@ from astropy.modeling import models
 from gwcs import WCS, coordinate_frames, fitswcs
 from numpy.typing import NDArray
 from scipy.spatial import KDTree
+from sphersgeo import MultiSphericalPoint, MultiSphericalPolygon, SphericalPolygon
 from stcal.alignment import util as wcs_util
 
 from romancal.datamodels.library import ModelLibrary
@@ -190,42 +188,16 @@ class SkyCells:
         )
 
     @cached_property
-    def vectorpoint_corners(self) -> NDArray[float]:
-        """corners in 3D Cartesian space on the unit sphere (Nx4x3 array of floats)"""
-        radec_corners = np.reshape(self.radec_corners, (len(self) * 4, 2))
-        return np.reshape(
-            sgv.normalize_vector(
-                np.stack(
-                    sgv.lonlat_to_vector(radec_corners[:, 0], radec_corners[:, 1]),
-                    axis=1,
-                )
-            ),
-            (len(self), 4, 3),
-        )
-
-    @cached_property
-    def vectorpoint_centers(self) -> NDArray[float]:
-        """centers in 3D Cartesian space on the unit sphere (Nx3 array of floats)"""
-        return sgv.normalize_vector(
-            np.stack(
-                sgv.lonlat_to_vector(
-                    self.radec_centers[:, 0], self.radec_centers[:, 1]
-                ),
-                axis=1,
-            )
-        )
-
-    @cached_property
-    def polygons(self) -> sgp.SphericalPolygon:
+    def polygons(self) -> MultiSphericalPolygon:
         """spherical polygons representing these skycells"""
-        return sgp.SphericalPolygon(
+        return MultiSphericalPolygon(
             [
-                sgp.SingleSphericalPolygon(
+                SphericalPolygon(
                     points=vectorpoint_corners,
                     inside=vectorpoint_center,
                 )
                 for vectorpoint_corners, vectorpoint_center in zip(
-                    self.vectorpoint_corners, self.vectorpoint_centers, strict=True
+                    (self.radec_corners, self.radec_centers), strict=True
                 )
             ]
         )
@@ -493,15 +465,9 @@ class SkyCells:
     def kdtree(self) -> KDTree:
         """k-d tree of skycells, using normalized center vectorpoints in 3D space"""
         return KDTree(
-            sgv.normalize_vector(
-                np.stack(
-                    sgv.lonlat_to_vector(
-                        self.data["ra_center"],
-                        self.data["dec_center"],
-                    ),
-                    axis=1,
-                )
-            )
+            MultiSphericalPoint(
+                np.stack([self.data["ra_center"], self.data["dec_center"]], axis=1),
+            ).xyz
         )
 
     def __len__(self) -> int:
@@ -665,27 +631,10 @@ class ProjectionRegion:
         )
 
     @cached_property
-    def vectorpoint_corners(self) -> NDArray[float]:
-        """corners in 3D Cartesian space on the unit sphere"""
-        return sgv.normalize_vector(
-            np.stack(sgv.lonlat_to_vector(*np.array(self.radec_corners).T), axis=1)
-        )
-
-    @cached_property
-    def vectorpoint_center(self) -> tuple[float, float, float]:
-        """center in 3D Cartesian space on the unit sphere"""
-        return np.mean(self.vectorpoint_corners, axis=0)
-
-    @cached_property
     def length(self) -> float:
         """diagonal length of the region"""
         # assume radial against sky background
-        return max(
-            sga.length(
-                self.vectorpoint_corners[index], self.vectorpoint_corners[index + 2]
-            )
-            for index in range(len(self.vectorpoint_corners) - 3)
-        )
+        return self.polygon.length
 
     @property
     def is_polar(self) -> bool:
@@ -693,12 +642,12 @@ class ProjectionRegion:
         return self.data["dec_max"] == 90.0 or self.data["dec_min"] == -90.0
 
     @cached_property
-    def polygon(self) -> sgp.SingleSphericalPolygon:
+    def polygon(self) -> SphericalPolygon:
         """spherical polygon representing this region"""
         if self.is_polar:
             # the projection regions at the poles are circular caps on the sphere;
             # a polygon built from the corners in that case would be degenerate
-            return sgp.SingleSphericalPolygon.from_cone(
+            return SphericalPolygon.from_cone(
                 *self.radec_tangent,
                 radius=(
                     90.0 - self.radec_bounds[1]
@@ -708,9 +657,8 @@ class ProjectionRegion:
                 steps=16,
             )
         else:
-            return sgp.SingleSphericalPolygon(
-                points=self.vectorpoint_corners,
-                inside=self.vectorpoint_center,
+            return SphericalPolygon(
+                self.vectorpoint_corners,
             )
 
     @property
@@ -842,15 +790,15 @@ class SkyMap:
     def projection_regions_kdtree(self) -> KDTree:
         """k-d tree of all projection regions in this skymap, using normalized center vectorpoints in 3D space"""
         return KDTree(
-            sgv.normalize_vector(
+            MultiSphericalPoint(
                 np.stack(
-                    sgv.lonlat_to_vector(
+                    [
                         self.model.projection_regions["ra_tangent"],
                         self.model.projection_regions["dec_tangent"],
-                    ),
+                    ],
                     axis=1,
-                )
-            )
+                ),
+            ).xyz
         )
 
     @property

@@ -5,8 +5,8 @@ matplotlib dependency is optional.
 """
 
 import numpy as np
-import spherical_geometry.vector as sgv
 from numpy.typing import NDArray
+from sphersgeo import SphericalPoint, SphericalPolygon
 
 import romancal.skycell.match as sm
 import romancal.skycell.skymap as sc
@@ -29,7 +29,7 @@ RAD_TO_ARCSEC = 180.0 / np.pi * 3600.0
 
 
 def find_intersecting_projregions(
-    footprint: sm._ImageFootprint,
+    footprint: SphericalPolygon,
     skymap: sc.SkyMap = None,
 ) -> list[int]:
     """Out of all projection regions, find ones that intersect the given image footprint
@@ -77,12 +77,12 @@ def veccoords_to_tangent_plane(
     """
 
     # First compute the tangent plane axis vectors.
-    x_axis = sgv.normalize_vector(np.cross([0, 0, 1], tangent_vectorpoint))
-    y_axis = sgv.normalize_vector(
+    x_axis = SphericalPoint(np.cross([0, 0, 1], tangent_vectorpoint)).xyz
+    y_axis = SphericalPoint(
         np.array([0, 0, 1])
         - np.array(tangent_vectorpoint)
         * np.dot(np.array([0, 0, 1]), np.array(tangent_vectorpoint))
-    )
+    ).xyz
     avertices = np.vstack(vertices).T
     x_coords = np.dot(x_axis, avertices) * RAD_TO_ARCSEC
     y_coords = np.dot(y_axis, avertices) * RAD_TO_ARCSEC
@@ -101,10 +101,8 @@ def plot_projregion(
     if axis is None:
         axis = plt
 
-    tangent_vectorpoint = sgv.normalize_vector(
-        sgv.lonlat_to_vector(*projregion.radec_tangent)
-    )
-    corners = projregion.vectorpoint_corners
+    tangent_vectorpoint = SphericalPoint(projregion.radec_tangent).xyz
+    corners = projregion.polygon.vertices.xyzs
     corners = np.concatenate([corners, corners[0, :].reshape((1, 3))], axis=0)
     corners_tangentplane = veccoords_to_tangent_plane(
         corners,
@@ -220,11 +218,9 @@ def plot_image_footprint_and_skycells(
         ]
         projregion = sc.ProjectionRegion(projregion_index, skymap=skymap)
 
-        tangent_vectorpoint = sgv.normalize_vector(
-            sgv.lonlat_to_vector(*projregion.radec_tangent)
-        )
+        tangent_vectorpoint = SphericalPoint(projregion.radec_tangent).xyz
         image_corners_tangentplane = veccoords_to_tangent_plane(
-            footprint.vectorpoint_vertices,
+            footprint.polygon.vertices.xyzs,
             tangent_vectorpoint,
         )
         plot_field(image_corners_tangentplane, fill="lightgrey", color="black")

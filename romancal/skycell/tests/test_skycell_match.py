@@ -31,8 +31,8 @@ import astropy.modeling.models as amm
 import astropy.units as u
 import numpy as np
 import pytest
-import spherical_geometry.vector as sgv
 from gwcs import WCS, coordinate_frames
+from sphersgeo import SphericalPoint
 
 import romancal.skycell.match as sm
 from romancal.skycell import skymap
@@ -65,38 +65,36 @@ def mk_im_corners(
     Generate 4 image corners of a square with the center at the supplied
     side size, ra, dec, and position angle (all in degrees).
     """
+
+    # vector_rotate_around takes radians as input
+    ra, dec = np.deg2rad((ra, dec))
+
     # Generate 4 unit vectors at ra, dec = (0 , 0)
-    center = sgv.lonlat_to_vector(0.0, 0.0)
-    radecvec = sgv.lonlat_to_vector(ra, dec)
-    zaxis = (0.0, 0.0, 1.0)
-    yaxis = (0.0, 1.0, 0.0)
-    pp = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (-size / 2,))) + zaxis + (+size / 2,))
+    center = SphericalPoint((0.0, 0.0))
+    radecvec = SphericalPoint((ra, dec))
+    zaxis = SphericalPoint((0.0, 0.0, 1.0))
+    yaxis = SphericalPoint((0.0, 1.0, 0.0))
+    pp = center.vector_rotate_around(yaxis, -size / 2).vector_rotate_around(
+        zaxis, +size / 2
     )
-    pm = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (+size / 2,))) + zaxis + (+size / 2,))
+    pm = center.vector_rotate_around(yaxis, +size / 2).vector_rotate_around(
+        zaxis, +size / 2
     )
-    mp = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (-size / 2,))) + zaxis + (-size / 2,))
+    mp = center.vector_rotate_around(yaxis, -size / 2).vector_rotate_around(
+        zaxis, -size / 2
     )
-    mm = sgv.rotate_around(
-        *(sgv.rotate_around(*(center + yaxis + (+size / 2,))) + zaxis + (-size / 2,))
+    mm = center.vector_rotate_around(yaxis, +size / 2).vector_rotate_around(
+        zaxis, -size / 2
     )
     rect = [pp, mp, mm, pm]
 
     # Now move to requested ra and dec
     trect = [
-        sgv.rotate_around(
-            *(sgv.rotate_around(*(vec + yaxis + (-dec,))) + zaxis + (ra,))
-        )
+        vec.vector_rotate_around(yaxis, -dec).vector_rotate_around(zaxis, ra)
         for vec in rect
     ]
     # Rotate to desired position angle
-    rrect = [sgv.rotate_around(*(vec + radecvec + (pa,))) for vec in trect]
-    frect = [sgv.vector_to_lonlat(*vec) for vec in rrect]
-    # Reorganize by ra, dec arrays
-    radecrect = np.array(frect)
-    return radecrect
+    return [vec.vector_rotate_around(radecvec, pa).lonlat for vec in trect]
 
 
 def mk_gwcs(ra, dec, pa, bounding_box=None, shape=(4096, 4096)) -> WCS:
